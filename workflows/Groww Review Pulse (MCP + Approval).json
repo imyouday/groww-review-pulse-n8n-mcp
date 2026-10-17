@@ -1,0 +1,689 @@
+{
+  "name": "Groww Review Pulse (MCP + Approval)",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Groww Review Pulse",
+        "formDescription": "Upload the Google Play reviews CSV (last 8-12 weeks).",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "csv",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".csv",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d189675d-f9bd-4d6f-8778-bb0010888b39",
+      "name": "Upload Reviews CSV",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        -80,
+        -384
+      ],
+      "webhookId": "b158a3fe-d69d-4b16-8d4e-2df3bc3cb938"
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "csv",
+        "options": {
+          "enableBOM": true,
+          "relaxQuotes": true
+        }
+      },
+      "id": "b63bd4f2-44cd-46f6-b94b-f14a73ed5af8",
+      "name": "Extract CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        128,
+        -384
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Step 1 prep: clean, filter by date window, sample (keeps LLM cost low)\nconst WEEKS = 12;\nconst cutoff = Date.now() - WEEKS * 7 * 864e5;\nconst feeRe = /brokerage|brokarage|brokrage|charge|\\bfees?\\b|deduct|\\bdp\\b|gst|expense ratio|exit load|stamp/i;\n\n// Profanity filter (English + Hinglish): abusive words are masked before the LLM ever sees them\nconst BAD_SRC = '(^|[^a-z])(fuck[a-z]*|f[*]ck[a-z]*|shit[a-z]*|bullshit|bitch[a-z]*|bastard[a-z]*|asshole[a-z]*|dick[a-z]*|cunt[a-z]*|whore[a-z]*|slut[a-z]*|crap[a-z]*|damn[a-z]*|wtf|stfu|motherf[a-z]*|piss[a-z]*|chutiy[a-z]*|chutiye|bhosd[a-z]*|bsdk|madarchod[a-z]*|maderchod[a-z]*|behenchod[a-z]*|bhenchod[a-z]*|benchod[a-z]*|gandu[a-z]*|gaand[a-z]*|harami[a-z]*|haramkhor[a-z]*|kamina[a-z]*|kamine[a-z]*|lavde[a-z]*|lawde[a-z]*|lodu[a-z]*|randi[a-z]*|saala|saale|kutte|kutta)(?=$|[^a-z])';\nconst clean = s => String(s).replace(new RegExp(BAD_SRC, 'gi'), (m, p) => p + '***');\n\nlet rows = $input.all().map(i => i.json)\n  .filter(r => r.Review && String(r.Review).trim().length > 15)\n  .map(r => ({\n    date: r.Date, rating: Number(r.Rating),\n    review: clean(String(r.Review).replace(/\\s+/g, ' ')).slice(0, 300),\n    votes: Number(r['Helpful votes']) || 0\n  }));\n\nconst inWindow = rows.filter(r => new Date(r.date).getTime() >= cutoff);\nrows = inWindow.length ? inWindow : rows;   // fall back if CSV is older than window\n\nconst dates = rows.map(r => new Date(r.date)).filter(d => !isNaN(d));\nconst minD = new Date(Math.min(...dates)).toISOString().slice(0,10);\nconst maxD = new Date(Math.max(...dates)).toISOString().slice(0,10);\n\nconst fee  = rows.filter(r => feeRe.test(r.review));\nconst low  = rows.filter(r => r.rating <= 3 && !feeRe.test(r.review)).slice(0, 80);\nconst high = rows.filter(r => r.rating >= 4 && !feeRe.test(r.review)).slice(0, 40);\nconst sample = [...fee, ...low, ...high].slice(0, 160);\n\nconst reviewsText = sample.map((r, i) => `${i+1}. [${r.rating}★] ${r.review}`).join('\\n');\nreturn [{ json: {\n  total_reviews: rows.length,\n  fee_mentions: fee.length,\n  date_range: `${minD} to ${maxD}`,\n  run_date: new Date().toISOString().slice(0,10),\n  reviews_text: reviewsText\n}}];"
+      },
+      "id": "d0796d3c-ce7a-4eea-b23e-acc2d4120226",
+      "name": "Prep: Clean & Sample",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        -384
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'Reviews (' + $('Prep: Clean & Sample').first().json.date_range + ', ' + $('Prep: Clean & Sample').first().json.total_reviews + ' total, ' + $('Prep: Clean & Sample').first().json.fee_mentions + ' mention a fee/charge):\\n\\n' + $('Prep: Clean & Sample').first().json.reviews_text }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are a senior product analyst for Groww (stocks, mutual funds, demat app). Use ONLY the reviews provided.\n1. Cluster the reviews into AT MOST 5 themes. For each: name, one-line description, approximate count.\n2. Rank the top 3 themes by volume and severity.\n3. Pick exactly 3 REAL quotes copied VERBATIM from the reviews (do not edit, translate or invent). Prefer English, specific, high-signal quotes. Quotes must be polite and professional: NEVER pick a review containing \"***\", abusive, vulgar, insulting or offensive language.\n4. Identify ONE recurring confusion or pain point about a fee/charge that is visible in the reviews (e.g. brokerage per order, DP charge on sells, GST/statutory charges, expense ratio transparency). Give: fee name, what users misunderstand, and 2 supporting verbatim quotes.\nIf no fee confusion exists, say so in the confusion field. Do not invent evidence. Return JSON only."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "f2386887-83a4-4715-9e47-dab3269fb65c",
+      "name": "Step 1: Review Insights",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        576,
+        -384
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "reasoningEffort": "low"
+        }
+      },
+      "id": "01194f08-d14b-4e66-8cbb-8b504b60520d",
+      "name": "OpenAI Chat Model (Insights)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        560,
+        -560
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\"type\": \"object\", \"properties\": {\"themes\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"name\": {\"type\": \"string\"}, \"description\": {\"type\": \"string\"}, \"count\": {\"type\": \"number\"}}}}, \"top3\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"quotes\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"fee_issue\": {\"type\": \"object\", \"properties\": {\"fee\": {\"type\": \"string\"}, \"confusion\": {\"type\": \"string\"}, \"evidence\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}}}}"
+      },
+      "id": "2f3dd264-0d08-4e8f-b96c-81068b051f57",
+      "name": "Insights JSON Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        736,
+        -560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// EDIT THESE: 2 official sources for the fee explainer. VERIFY they are live & current before running.\nreturn [{ json: {\n  url1: 'https://groww.in/pricing',                 // Groww official pricing/charges page\n  url2: 'https://REPLACE-WITH-OFFICIAL-SECOND-SOURCE' // e.g. depository (CDSL/NSDL) or SEBI/exchange page on the charge\n}}];"
+      },
+      "id": "92bf0cd1-c603-4651-82e6-c16650da41ab",
+      "name": "Config: Official Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        -384
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url1 }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "aa278787-3085-4893-82c8-83dac25b4129",
+      "name": "Fetch Official Page 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1136,
+        -384
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config: Official Sources').first().json.url2 }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "605de906-08d7-4212-a0d9-84cd8e8edf66",
+      "name": "Fetch Official Page 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        -384
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Strip HTML and keep only fee-relevant text (smaller prompt = faster, cheaper Step 3)\nconst clean = h => String(h || '')\n  .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n  .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n  .replace(/<(nav|header|footer)[\\s\\S]*?<\\/\\1>/gi, ' ')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')\n  .replace(/\\s+/g, ' ').trim();\n// Keep a window starting at the first fee keyword, capped at MAX chars\n// Prefer the start of the pricing table; fall back to the first fee keyword after the page title\nconst anchorRe = /account opening|equity brokerage|schedule of charges|tariff/i;\nconst feeRe = /\\bcharges?\\b|\\bfees?\\b|brokerage/i;\nconst MAX = 6000;\nconst focus = t => {\n  let i = t.search(anchorRe);\n  if (i < 0) { const j = t.slice(200).search(feeRe); i = j < 0 ? 0 : j + 200; }\n  let out = t.slice(i, i + MAX);\n  // Drop footer / site-map links after the table\n  const end = out.search(/Contact Us|All rights reserved|© ?\\d{4}/i);\n  if (end > 500) out = out.slice(0, end);\n  return out;\n};\nlet p1 = '', p2 = '';\ntry { p1 = focus(clean($('Fetch Official Page 1').first().json.data)); } catch(e) {}\ntry { p2 = focus(clean($('Fetch Official Page 2').first().json.data)); } catch(e) {}\nconst cfg = $('Config: Official Sources').first().json;\nreturn [{ json: {\n  url1: cfg.url1, url2: cfg.url2,\n  source_text: `SOURCE 1 (${cfg.url1}):\\n${p1 || '[could not fetch]'}\\n\\nSOURCE 2 (${cfg.url2}):\\n${p2 || '[could not fetch]'}`\n}}];"
+      },
+      "id": "b127ea48-4835-477a-9dff-fde61d77eb10",
+      "name": "Strip & Merge Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        -384
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'Review window: ' + $('Prep: Clean & Sample').first().json.date_range + ' (' + $('Prep: Clean & Sample').first().json.total_reviews + ' reviews)\\n\\nINSIGHTS JSON:\\n' + JSON.stringify($('Step 1: Review Insights').first().json.output) }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Write a weekly internal product pulse for the Groww product team. HARD LIMIT: 250 words total. Markdown with exactly these sections:\n## Top themes\n(3 short bullets)\n## What users say\n(the 3 provided quotes, verbatim, as blockquotes)\n## Key observation\n(2-3 sentences: what is going wrong / trending)\n## Action ideas\n(exactly 3 numbered ideas, each starting with a verb)\nUse ONLY the provided insights. Do not invent numbers."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "f5dbeda0-391b-4e18-80b1-824ef7e3a1e9",
+      "name": "Step 2: Weekly Pulse",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        -16,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "reasoningEffort": "low"
+        }
+      },
+      "id": "a1365bdf-4ccf-42b7-81c5-422bddd3fdd7",
+      "name": "OpenAI Chat Model (Pulse)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        64,
+        288
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'FEE: ' + $('Step 1: Review Insights').first().json.output.fee_issue.fee + '\\nUSER CONFUSION (from reviews): ' + $('Step 1: Review Insights').first().json.output.fee_issue.confusion + '\\nURL 1: ' + $('Strip & Merge Sources').first().json.url1 + '\\nURL 2: ' + $('Strip & Merge Sources').first().json.url2 + '\\nLAST CHECKED DATE: ' + $now.format('yyyy-MM-dd') + '\\n\\n' + $('Strip & Merge Sources').first().json.source_text }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Write a customer-facing fee explainer using ONLY the official source text provided. Rules:\n- Maximum 6 bullet points, each starting with \"- \".\n- Neutral, facts-only tone. No advice, opinions, marketing language or apologies.\n- Do NOT state any figure, rate or rule that is not in the source text. If the sources do not confirm something, leave it out.\n- Explain what the charge is, when it applies, and what users commonly confuse (given the confusion summary).\nAfter the bullets, add exactly these lines:\nSources: <URL 1> | <URL 2>\nLast checked: <the date provided>"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "e013431c-8a86-4349-9c52-38e5c85e765f",
+      "name": "Step 3: Fee Explainer",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        336,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "reasoningEffort": "low"
+        }
+      },
+      "id": "6cb1207d-d0f6-483c-89ca-e68e39e7bb6c",
+      "name": "OpenAI Chat Model (Fee)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        416,
+        288
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate constraints + build a compact HTML email for MCP\nconst ins   = $('Step 1: Review Insights').first().json.output;\nconst pulse = String($('Step 2: Weekly Pulse').first().json.text || '').trim();\nconst fee   = String($('Step 3: Fee Explainer').first().json.text || '').trim();\nconst src   = $('Strip & Merge Sources').first().json;\nconst cfg   = { url1: src.url1, url2: src.url2 };\nconst prep  = $('Prep: Clean & Sample').first().json;\n\nconst words   = pulse.split(/\\s+/).filter(Boolean).length;\nconst bullets = fee.split('\\n').filter(l => /^\\s*[-•*]\\s+/.test(l)).map(l => l.replace(/^\\s*[-•*]\\s+/, '').trim());\nconst today   = new Date(Date.now() + 330 * 60000).toISOString().slice(0,10); // IST date\nconst hasUrl2 = !!cfg.url2 && !/REPLACE/i.test(cfg.url2);\nconst checks = {\n  pulse_words: words, pulse_ok: words <= 250,\n  fee_bullets: bullets.length, fee_ok: bullets.length <= 6,\n  themes_ok: (ins.themes||[]).length <= 5,\n  quotes_ok: (ins.quotes||[]).length === 3,\n  last_checked_ok: /Last checked:/i.test(fee)\n};\nconst all_ok = Object.values(checks).every(v => v === true || typeof v === 'number');\n\n// ---- helpers ----\nconst esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst inline = s => esc(s).replace(/\\*\\*(.+?)\\*\\*/g, '<b>$1</b>');\nconst strip = l => String(l).replace(/^(\\d+[.)]|[-•*>])\\s*/, '').replace(/^[\"“]+|[\"”]+$/g, '').trim();\nconst section = (md, name) => {\n  const hit = md.split(/^##\\s+/m).find(p => p.toLowerCase().startsWith(name.toLowerCase()));\n  return hit ? hit.split('\\n').slice(1).map(l => l.trim()).filter(Boolean) : [];\n};\nconst short = (s, n) => (s.length > n ? s.slice(0, n - 1).trim() + '…' : s);\n// Profanity safety net (same list as Prep)\nfunction badRe(f) { return new RegExp('(^|[^a-z])(fuck[a-z]*|f[*]ck[a-z]*|shit[a-z]*|bullshit|bitch[a-z]*|bastard[a-z]*|asshole[a-z]*|dick[a-z]*|cunt[a-z]*|whore[a-z]*|slut[a-z]*|crap[a-z]*|damn[a-z]*|wtf|stfu|motherf[a-z]*|piss[a-z]*|chutiy[a-z]*|chutiye|bhosd[a-z]*|bsdk|madarchod[a-z]*|maderchod[a-z]*|behenchod[a-z]*|bhenchod[a-z]*|benchod[a-z]*|gandu[a-z]*|gaand[a-z]*|harami[a-z]*|haramkhor[a-z]*|kamina[a-z]*|kamine[a-z]*|lavde[a-z]*|lawde[a-z]*|lodu[a-z]*|randi[a-z]*|saala|saale|kutte|kutta)(?=$|[^a-z])', f); }\nfunction clean(s) { return String(s == null ? '' : s).replace(badRe('gi'), (m, p) => p + '***'); }\nfunction isClean(s) { return !badRe('i').test(String(s)) && String(s).indexOf('***') === -1; }\n\nconst GREEN = '#00b386';\nconst h  = t => '<h3 style=\"margin:22px 0 8px;font-size:15px;color:' + GREEN + '\">' + t + '</h3>';\nconst li = arr => arr.map(x => '<li style=\"margin:0 0 6px\">' + inline(x) + '</li>').join('');\n\n// ---- content (kept short on purpose) ----\nconst themes      = ((ins.top3 && ins.top3.length) ? ins.top3 : section(pulse, 'Top themes').map(strip)).slice(0, 3).map(clean);\nconst quotes      = (ins.quotes || []).map(strip).filter(isClean).slice(0, 2).map(q => short(q, 160));\nconst observation = clean(section(pulse, 'Key observation').join(' '));\nconst actions     = section(pulse, 'Action ideas').map(strip).slice(0, 3).map(clean);\nconst feeBullets  = bullets.slice(0, 4).map(clean);\n\nconst html =\n  '<div style=\"font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;color:#222;font-size:14px;line-height:1.55\">' +\n    '<div style=\"background:' + GREEN + ';color:#fff;padding:16px 20px;border-radius:8px 8px 0 0\">' +\n      '<div style=\"font-size:18px;font-weight:bold\">Groww Weekly Pulse</div>' +\n      '<div style=\"font-size:12px;opacity:.9\">' + esc(prep.date_range) + ' &middot; ' + esc(prep.total_reviews) + ' reviews</div>' +\n    '</div>' +\n    '<div style=\"padding:4px 20px 20px;border:1px solid #e5e5e5;border-top:0;border-radius:0 0 8px 8px\">' +\n      h('Top themes') + '<ol style=\"padding-left:20px;margin:0\">' + li(themes) + '</ol>' +\n      (observation ? h('Key observation') + '<p style=\"margin:0\">' + inline(observation) + '</p>' : '') +\n      (quotes.length ? h('What users say') + quotes.map(q => '<p style=\"margin:0 0 8px;padding:6px 12px;border-left:3px solid ' + GREEN + ';background:#f6fbf9;font-style:italic;color:#444\">' + inline(q) + '</p>').join('') : '') +\n      (actions.length ? h('Action ideas') + '<ol style=\"padding-left:20px;margin:0\">' + li(actions) + '</ol>' : '') +\n      h('Fee clarification: ' + esc(ins.fee_issue.fee)) + '<ul style=\"padding-left:20px;margin:0\">' + li(feeBullets) + '</ul>' +\n      '<p style=\"margin:18px 0 0;font-size:12px;color:#888\">Sources: <a href=\"' + esc(cfg.url1) + '\" style=\"color:' + GREEN + '\">Groww pricing</a>' + (hasUrl2 ? ' &middot; <a href=\"' + esc(cfg.url2) + '\" style=\"color:' + GREEN + '\">link 2</a>' : '') + ' &middot; Last checked ' + today + '</p>' +\n    '</div>' +\n  '</div>';\n\nconst subject = 'Groww Weekly Pulse — ' + today;\nconst email_body = html;\n\n// ---- structured, readable Google Doc entry (plain text) ----\nconst plain = s => String(s).replace(/\\*\\*(.+?)\\*\\*/g, '$1');\nconst num = arr => arr.map((x, i) => '   ' + (i + 1) + '. ' + plain(x)).join('\\n');\nconst dot = arr => arr.map(x => '   • ' + plain(x)).join('\\n');\nconst docParts = [\n  'GROWW WEEKLY PULSE  |  ' + today,\n  'Review window: ' + prep.date_range + '   |   Reviews analysed: ' + prep.total_reviews,\n  '',\n  'TOP THEMES',\n  num(themes)\n];\nif (observation) docParts.push('', 'KEY OBSERVATION', '   ' + plain(observation));\nif (quotes.length) docParts.push('', 'WHAT USERS SAY', quotes.map(q => '   “' + q + '”').join('\\n'));\nif (actions.length) docParts.push('', 'ACTION IDEAS', num(actions));\ndocParts.push(\n  '',\n  'FEE CLARIFICATION: ' + clean(ins.fee_issue.fee),\n  '   User confusion: ' + clean(ins.fee_issue.confusion),\n  dot(bullets.map(clean)),\n  '',\n  'SOURCES',\n  '   • ' + cfg.url1,\n  ...(hasUrl2 ? ['   • ' + cfg.url2] : []),\n  '   Last checked: ' + today\n);\nconst log_entry = docParts.join('\\n');\nreturn [{ json: { checks, all_ok, subject, email_body, log_entry, pulse: clean(pulse), fee: clean(fee),\n  checks_text: JSON.stringify(checks), date_range: prep.date_range }}];"
+      },
+      "id": "8d42731d-7544-4379-b5c1-a1a4df79f1bb",
+      "name": "Validate & Build Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "sendTo": "uday.bhartizl10@gmail.com",
+        "subject": "APPROVAL NEEDED: Weekly Pulse + Fee Explainer",
+        "message": "={{ '<h3>Approval needed</h3><p>Review window: ' + $json.date_range + ' | Validation: ' + $json.checks_text + '</p><hr><h3>Weekly Pulse</h3><pre style=\"white-space:pre-wrap\">' + $json.pulse + '</pre><hr><h3>Fee Explainer</h3><pre style=\"white-space:pre-wrap\">' + $json.fee + '</pre><hr><p>Approve to (1) append to the Google Doc and (2) email the formatted pulse to uday.bhartizl10@gmail.com via MCP.</p>' }}",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "Approve & Log",
+            "disapproveLabel": "Reject"
+          }
+        },
+        "options": {}
+      },
+      "id": "94bda63b-1f40-4dfe-8d84-9433f7a4638a",
+      "name": "APPROVAL GATE (Gmail Send & Wait)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        80
+      ],
+      "webhookId": "b1ce5482-915c-4799-97cf-8fe7eed1b55a",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "X9w95DKNDQpoitcq",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "184d3582-8e4b-4c6e-8497-ac7de3bec7d8",
+              "leftValue": "={{ $json.data.approved }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4097a835-d823-4026-a3c1-aaf82893343b",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1184,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'DOC ENTRY:\\n' + $('Validate & Build Payload').first().json.log_entry + '\\n\\nEMAIL SUBJECT:\\n' + $('Validate & Build Payload').first().json.subject + '\\n\\nEMAIL BODY:\\n' + $('Validate & Build Payload').first().json.email_body }}",
+        "options": {
+          "systemMessage": "You are a strict executor. Use ONLY the provided MCP tools. Do exactly two things, in this order:\n1. Call the append_to_doc tool, passing the DOC ENTRY text below EXACTLY as given as the 'entry' text (no edits, keep every line break and indentation).\n2. Call the send_email tool with the exact Subject and the exact HTML Body below as Message (no edits, no rewording, keep all HTML tags). This sends the email.\nAfter both succeed, reply with one line: 'Logged to doc and email sent.' If a tool fails, say which one and why."
+        }
+      },
+      "id": "1ab36494-a706-410f-bc84-c91e4f709258",
+      "name": "MCP Executor Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1408,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "reasoningEffort": "low"
+        }
+      },
+      "id": "6247e7b1-d102-4621-957b-886d053d1d0c",
+      "name": "OpenAI Chat Model (Executor)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1408,
+        48
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "endpointUrl": "https://youdayyy.app.n8n.cloud/mcp/YOUR_MCP_PATH",
+        "options": {}
+      },
+      "id": "f93782c8-bdba-450c-8de4-302fde8fd5bf",
+      "name": "Own MCP Client",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.4,
+      "position": [
+        1552,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "767693db-a1f2-4ae0-a285-3dc7e9ed7a1f",
+              "name": "result",
+              "value": "Rejected at approval gate. Nothing was logged and no draft was created.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3b659ec8-1103-4426-91dc-8f8042599d18",
+      "name": "Rejected: No Action",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1440,
+        272
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Upload Reviews CSV": {
+      "main": [
+        [
+          {
+            "node": "Extract CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract CSV": {
+      "main": [
+        [
+          {
+            "node": "Prep: Clean & Sample",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep: Clean & Sample": {
+      "main": [
+        [
+          {
+            "node": "Step 1: Review Insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step 1: Review Insights": {
+      "main": [
+        [
+          {
+            "node": "Config: Official Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model (Insights)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Step 1: Review Insights",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insights JSON Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Step 1: Review Insights",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config: Official Sources": {
+      "main": [
+        [
+          {
+            "node": "Fetch Official Page 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Official Page 1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Official Page 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Official Page 2": {
+      "main": [
+        [
+          {
+            "node": "Strip & Merge Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Strip & Merge Sources": {
+      "main": [
+        [
+          {
+            "node": "Step 2: Weekly Pulse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step 2: Weekly Pulse": {
+      "main": [
+        [
+          {
+            "node": "Step 3: Fee Explainer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model (Pulse)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Step 2: Weekly Pulse",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step 3: Fee Explainer": {
+      "main": [
+        [
+          {
+            "node": "Validate & Build Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model (Fee)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Step 3: Fee Explainer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Build Payload": {
+      "main": [
+        [
+          {
+            "node": "APPROVAL GATE (Gmail Send & Wait)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "APPROVAL GATE (Gmail Send & Wait)": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "MCP Executor Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rejected: No Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model (Executor)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "MCP Executor Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Own MCP Client": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Executor Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "d529e6ab-807b-47c9-8700-207649483c37",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cbcb39a0da99e46a55449b89a0d5fd405efc1a97c1db25c1f7a48636215eaf27"
+  },
+  "nodeGroups": [],
+  "id": "RZPUyCMQciiPrIMf",
+  "tags": []
+}

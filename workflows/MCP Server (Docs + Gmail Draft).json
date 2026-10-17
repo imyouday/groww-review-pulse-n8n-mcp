@@ -1,0 +1,115 @@
+{
+  "name": "MCP Server (Docs + Gmail Draft)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "YOUR_MCP_PATH"
+      },
+      "id": "86b5b08e-1985-4450-bbf5-dac2124e29e6",
+      "name": "MCP Server Trigger",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "YOUR_MCP_PATH"
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Sends an HTML email to the fixed team recipient. Provide Subject and Message (the full HTML body, passed through unchanged).",
+        "sendTo": "uday.bhartizl10@gmail.com",
+        "subject": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Subject', `Email subject line`, 'string') }}",
+        "message": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Message', `Full HTML email body, exactly as given`, 'string') }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Groww Review Pulse"
+        }
+      },
+      "id": "d1e566db-1ea3-44b7-a9e7-295836130241",
+      "name": "send_email",
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        16,
+        224
+      ],
+      "webhookId": "0455edfa-e82b-434b-896b-fce8fa97a2c3",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "X9w95DKNDQpoitcq",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Appends a formatted weekly pulse entry (multi-line plain text) to the end of the weekly pulse Google Doc. Pass the text exactly as given, keeping all line breaks.",
+        "operation": "update",
+        "documentURL": "https://docs.google.com/document/d/1dX1AVCguAsv0ZVsLtiReR7j7q5cMb_s-1ifWAXOHRPY/edit",
+        "actionsUi": {
+          "actionFields": [
+            {
+              "action": "insert",
+              "text": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('entry', `The formatted pulse entry to append, exactly as given with all line breaks`, 'string') }}\n\n══════════════════════════════════════\n\n"
+            }
+          ]
+        }
+      },
+      "id": "b096fea9-f526-40ae-91c4-beb303c33a1e",
+      "name": "append_to_doc",
+      "type": "n8n-nodes-base.googleDocsTool",
+      "typeVersion": 2,
+      "position": [
+        272,
+        224
+      ],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "wpNupzkp2mYvUBxq",
+          "name": "Google Docs account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "send_email": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "append_to_doc": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "1e50e5b8-be46-48dd-8367-c371f217cf96",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cbcb39a0da99e46a55449b89a0d5fd405efc1a97c1db25c1f7a48636215eaf27"
+  },
+  "nodeGroups": [],
+  "id": "8wsmrbJUncTsF1l3",
+  "tags": []
+}
