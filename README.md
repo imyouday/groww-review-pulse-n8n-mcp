@@ -7,10 +7,7 @@
 ### 2. n8n MCP Server
 ![MCP Server](screenshots/02-n8n-mcp-server.png)
 
-### 3. Approval Email
-![Approval Email](screenshots/03-email-received.png)
-
-### 4. Google Doc Entry
+### 3. Google Doc Entry
 ![Google Doc Entry](screenshots/04-google-doc-entry.png)
 
 ## Screenshots
@@ -21,10 +18,7 @@
 ### 2. n8n MCP Server
 ![MCP Server](screenshots/02-n8n-mcp-server.png)
 
-### 3. Approval Email
-![Approval Email](screenshots/03-email-received.png)
-
-### 4. Google Doc Entry
+### 3. Google Doc Entry
 ![Google Doc Entry](screenshots/04-google-doc-entry.png)
 
 ## How to run
@@ -45,8 +39,6 @@
 | `outputs/fee_explainer.md` | Generated fee explainer |
 | `outputs/doc_entry.txt` | Entry appended to the Google Doc |
 | `outputs/email.txt` | Email text |
-| `screenshots/` | Workflow, approval email, Doc entry, email |
-| `SOURCES.md` | Source list (4–6 URLs) |
 
 ## Limitations
 
