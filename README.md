@@ -1,37 +1,31 @@
-# Groww Review Pulse: n8n + MCP with Approval Gate
 
-An AI workflow that turns raw Groww Google Play reviews into (1) a weekly internal product pulse and (2) a customer-facing fee explainer. It logs both through MCP and sends the summary email, only after a human approves.
+## Screenshots
 
-Built for NextLeap PM Fellowship, Milestone 5.
+### 1. n8n Pipeline Workflow
+![Pipeline Workflow](screenshots/01-n8n-pipeline-workflow.png)
 
-## What it does
+### 2. n8n MCP Server
+![MCP Server](screenshots/02-n8n-mcp-server.png)
 
-```
-Upload CSV → Clean & sample → Step 1: Insights (themes, quotes, fee issue)
-→ Fetch 2 official pages → Step 2: Weekly Pulse (≤250 words)
-→ Step 3: Fee Explainer (≤6 bullets, 2 sources, "Last checked")
-→ Validate → APPROVAL GATE (Gmail "Send & Wait")
-→ Approved? ─ yes → AI Agent + MCP Client → MCP Server → Google Doc append + Gmail email (sent)
-            └ no  → stop, nothing is logged
-```
+### 3. Approval Email
+![Approval Email](screenshots/03-email-received.png)
 
-## What fee issue was identified from reviews
+### 4. Google Doc Entry
+![Google Doc Entry](screenshots/04-google-doc-entry.png)
 
-**Brokerage per order, DP (depository) charges and statutory add-ons (GST etc.).**
+## Screenshots
 
-Reviews from Oct 10–14, 2026 (184 analysed after cleaning) show small traders who feel per-order and DP charges are high or unclear, and some report unexpected deductions. The CSV has no "exit load" mentions, so that fee was not used.
+### 1. n8n Pipeline Workflow
+![Pipeline Workflow](screenshots/01-n8n-pipeline-workflow.png)
 
-Top themes found: High Fees & Charges · Customer Support & Withdrawals · Trading Execution, Performance & Bugs.
+### 2. n8n MCP Server
+![MCP Server](screenshots/02-n8n-mcp-server.png)
 
-## Where MCP approval happens
+### 3. Approval Email
+![Approval Email](screenshots/03-email-received.png)
 
-1. **Approval gate:** the `APPROVAL GATE (Gmail Send & Wait)` node emails the pulse, the explainer and the validation checks. The workflow pauses until you click **Approve & Log** or **Reject**.
-2. **Approved?** (IF node) sends only approved runs to the MCP Executor Agent. Rejected runs stop at `Rejected: No Action`.
-3. **MCP calls** (`Own MCP Client` → `MCP Server Trigger`) expose two tools:
-   - `append_to_doc`: appends the structured entry to a Google Doc
-   - `send_email`: sends the weekly pulse + fee explainer email, only after approval
-
-Logged entry shape: `{date, top_themes, weekly_pulse, identified_fee_issue, explanation_bullets, source_links}`
+### 4. Google Doc Entry
+![Google Doc Entry](screenshots/04-google-doc-entry.png)
 
 ## How to run
 
